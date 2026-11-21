@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FraudSentinel - real-time fraud monitor</title>
+<meta name="description" content="Real-time payment fraud detection with streaming anomaly scoring, explainable alerts and a live monitoring dashboard.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%2313202b%27/%3E%3Ccircle cx=%2716%27 cy=%2716%27 r=%276.5%27 fill=%27none%27 stroke=%27%23e8edf1%27 stroke-width=%273.5%27/%3E%3Cpath d=%27M16 9.5a6.5 6.5 0 0 1 6.5 6.5%27 fill=%27none%27 stroke=%27%23d8321a%27 stroke-width=%273.5%27/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <div>
+      <h1>FraudSentinel</h1>
+      <p>Real-time payment fraud monitor</p>
+    </div>
+  </div>
+  <div class="top-actions">
+    <span id="conn" class="pill" data-state="connecting" role="status"><i></i><b>Connecting</b></span>
+    <button id="btnPause" class="btn" type="button">Pause stream</button>
+    <button id="btnSound" class="btn ghost" type="button" aria-pressed="false">Alert sound off</button>
+    
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- Key metrics -->
+  <section class="kpis" aria-label="Key metrics">
+    <div class="kpi" id="k-total">
+      <span class="k-label">Total transactions</span>
+      <strong class="k-val">0</strong>
+      <span class="k-sub">&nbsp;</span>
+      <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </div>
+    <div class="kpi" id="k-flagged">
+      <span class="k-label">Fraud detected</span>
+      <strong class="k-val">0</strong>
+      <span class="k-sub">&nbsp;</span>
+      <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </div>
+    <div class="kpi" id="k-rate">
+      <span class="k-label">Fraud rate</span>
+      <strong class="k-val">0%</strong>
+      <span class="k-sub">&nbsp;</span>
+      <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </div>
+    <div class="kpi" id="k-money">
+      <span class="k-label">Money at risk</span>
+      <strong class="k-val">₹0</strong>
+      <span class="k-sub">&nbsp;</span>
+      <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </div>
+    <div class="kpi" id="k-det">
+      <span class="k-label">Average detection time</span>
+      <strong class="k-val">0 ms</strong>
+      <span class="k-sub">&nbsp;</span>
+      <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </div>
+    <div class="kpi" id="k-open">
+      <span class="k-label">Alerts to review</span>
+      <strong class="k-val">0</strong>
+      <span class="k-sub">&nbsp;</span>
+      <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </div>
+  </section>
+
+  <div class="grid">
+
+    <!-- Live transaction tape -->
+    <section class="panel s8" aria-labelledby="h-feed">
+      <header class="panel-h">
+        <h2 id="h-feed">Live transactions</h2>
+        <div class="panel-tools">
+          <div class="seg" role="tablist" aria-label="Feed filter">
+            <button type="button" role="tab" class="on" data-feed="all" aria-selected="true">All</button>
+            <button type="button" role="tab" data-feed="flagged" aria-selected="false">Flagged only</button>
+          </div>
+          <input id="feedSearch" class="input sm" type="search" placeholder="Search customer, merchant, city" aria-label="Search transactions">
+        </div>
+      </header>
+      <div class="tape-head" aria-hidden="true">
+        <span>Time</span><span>Customer</span><span>Merchant</span><span class="h-loc">Location</span><span class="r">Amount</span><span>Risk</span>
+      </div>
+      <div id="feed" class="tape" aria-live="off">
+        <p class="empty">Waiting for the first transactions...</p>
+      </div>
+    </section>
+
+    <!-- Alerts -->
+    <section class="panel s4" aria-labelledby="h-alerts">
+      <header class="panel-h">
+        <h2 id="h-alerts">Fraud alerts</h2>
+        <div class="panel-tools">
+          <div class="seg" role="tablist" aria-label="Alert filter">
+            <button type="button" role="tab" class="on" data-alerts="open" aria-selected="true">To review</button>
+            <button type="button" role="tab" data-alerts="all" aria-selected="false">All</button>
+          </div>
+          <a class="btn ghost sm" id="btnExport" href="/api/export/alerts.csv">Export CSV</a>
+        </div>
+      </header>
+      <div id="alerts" class="alerts">
+        <p class="empty">No alerts yet. Suspicious payments will appear here.</p>
+      </div>
+    </section>
+
+    <!-- Timeline -->
+    <section class="panel s8" aria-labelledby="h-time">
+      <header class="panel-h">
+        <h2 id="h-time">Traffic and flagged payments, last 5 minutes</h2>
+      </header>
+      <div class="chart tall"><canvas id="chTimeline" aria-label="Transactions and flagged payments over time" role="img"></canvas></div>
+    </section>
+
+    <section class="panel s4" aria-labelledby="h-why">
+      <header class="panel-h"><h2 id="h-why">Why payments were flagged</h2></header>
+      <div class="chart tall"><canvas id="chReasons" aria-label="Flag reasons" role="img"></canvas></div>
+    </section>
+
+    <!-- Map -->
+    <section class="panel s7" aria-labelledby="h-map">
+      <header class="panel-h">
+        <h2 id="h-map">Where payments are happening</h2>
+        <div class="legend"><span><i class="dot ok"></i>Normal</span><span><i class="dot bad"></i>Flagged</span></div>
+      </header>
+      <div id="map" class="map"></div>
+    </section>
+
+    <!-- Model + top lists -->
+    <section class="panel s5" aria-labelledby="h-model">
+      <header class="panel-h"><h2 id="h-model">Detection quality</h2></header>
+      <div class="perf">
+        <div><span>Precision</span><strong id="pf-p">-</strong></div>
+        <div><span>Recall</span><strong id="pf-r">-</strong></div>
+        <div><span>F1 score</span><strong id="pf-f">-</strong></div>
+      </div>
+      <p id="pf-note" class="note-line">Scored against the simulator's hidden fraud labels.</p>
+      <dl class="stats2">
+        <div><dt>Average detection time</dt><dd id="lt-avg">-</dd></div>
+        <div><dt>95th percentile</dt><dd id="lt-p95">-</dd></div>
+        <div><dt>Live throughput</dt><dd id="lt-tps">-</dd></div>
+        <div><dt>Engine uptime</dt><dd id="lt-up">-</dd></div>
+      </dl>
+      <h3 class="sub-h">Riskiest merchants</h3>
+      <ol id="topMerch" class="rank"><li class="muted">No data yet</li></ol>
+      <h3 class="sub-h">Most-flagged customers</h3>
+      <ol id="topUsers" class="rank"><li class="muted">No data yet</li></ol>
+    </section>
+
+    <!-- Category + score distribution -->
+    <section class="panel s6" aria-labelledby="h-cat">
+      <header class="panel-h"><h2 id="h-cat">Flagged payments by merchant type</h2></header>
+      <div class="chart"><canvas id="chCats" aria-label="Flagged by category" role="img"></canvas></div>
+    </section>
+
+    <section class="panel s6" aria-labelledby="h-hist">
+      <header class="panel-h">
+        <h2 id="h-hist">Risk score distribution</h2>
+        <span class="muted sm">Log scale. Red bars are above the alert threshold.</span>
+      </header>
+      <div class="chart"><canvas id="chHist" aria-label="Risk score distribution" role="img"></canvas></div>
+    </section>
+
+    <!-- Controls -->
+    <section class="panel s5" aria-labelledby="h-ctl">
+      <header class="panel-h"><h2 id="h-ctl">Control centre</h2></header>
+      <div class="ctl">
+        <label class="slider">
+          <span>Stream speed <b id="v-rate">6</b> transactions per second</span>
+          <input id="rate" type="range" min="1" max="40" step="1" value="6">
+        </label>
+        <label class="slider">
+          <span>Alert threshold <b id="v-thr">0.65</b> <small>lower catches more, higher means fewer false alarms</small></span>
+          <input id="thr" type="range" min="0.30" max="0.90" step="0.01" value="0.65">
+        </label>
+        <label class="slider">
+          <span>Simulated fraud share <b id="v-fr">4%</b></span>
+          <input id="fr" type="range" min="0" max="15" step="1" value="4">
+        </label>
+        <div class="attacks">
+          <p class="sub-h">Launch a simulated attack</p>
+          <div class="btn-row">
+            <button class="btn" data-attack="velocity" type="button">Rapid-fire payments</button>
+            <button class="btn" data-attack="geo" type="button">Impossible travel</button>
+            <button class="btn" data-attack="spike" type="button">Unusual amount</button>
+            <button class="btn" data-attack="takeover" type="button">Account takeover</button>
+            <button class="btn" data-attack="card_testing" type="button">Card testing</button>
+            <button class="btn ghost" data-attack="random" type="button">Random attack</button>
+          </div>
+        </div>
+        <div class="btn-row end">
+          <button id="btnReset" class="btn ghost" type="button">Reset counters</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Risk checker -->
+    <section class="panel s7" aria-labelledby="h-chk">
+      <header class="panel-h">
+        <h2 id="h-chk">Risk checker</h2>
+        <span class="muted sm">Test a payment before it happens. Nothing is saved.</span>
+      </header>
+      <div class="presets">
+        <button class="btn ghost sm" type="button" data-preset="normal">Everyday purchase</button>
+        <button class="btn ghost sm" type="button" data-preset="abroad">Large overseas purchase</button>
+        <button class="btn ghost sm" type="button" data-preset="burst">Rapid-fire payments</button>
+        <button class="btn ghost sm" type="button" data-preset="crypto">Crypto top-up on new device</button>
+      </div>
+      <form id="chkForm" class="chk">
+        <label>Amount (₹)<input class="input" id="c-amt" type="number" min="1" step="1" value="2500" required></label>
+        <label>Merchant type<select class="input" id="c-cat"></select></label>
+        <label>City<select class="input" id="c-city"></select></label>
+        <label>Device<select class="input" id="c-dev"><option value="0">Customer's usual device</option><option value="1">New device</option></select></label>
+        <label>Minutes since last payment<input class="input" id="c-min" type="number" min="0" step="1" value="120"></label>
+        <label>Payments in the last minute<input class="input" id="c-vel" type="number" min="0" max="50" step="1" value="0"></label>
+        <button class="btn primary" type="submit">Check risk</button>
+      </form>
+      <div id="chkOut" class="chk-out" aria-live="polite"><p class="empty">Pick a preset or enter a payment, then check its risk.</p></div>
+    </section>
+
+  </div>
+
+  <!-- How it works -->
+  <section class="how" aria-labelledby="h-how">
+    <h2 id="h-how">How it works</h2>
+    <ol class="steps">
+      <li><b>Ingest</b><span>Each payment arrives over the API or the simulated stream.</span></li>
+      <li><b>Build features</b><span>Speed of spending, distance travelled, deviation from the customer's habits, merchant risk, device, hour.</span></li>
+      <li><b>Score</b><span>An Isolation Forest finds statistical outliers; explainable rules add context.</span></li>
+      <li><b>Explain and alert</b><span>Flagged payments carry plain-language reasons and are pushed over WebSocket.</span></li>
+      <li><b>Review</b><span>Analysts confirm fraud or mark it safe, and can export the list.</span></li>
+    </ol>
+    <div class="api">
+      <p>Score your own payments with one request:</p>
+<pre><code>curl -X POST http://localhost:8000/api/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"U1001","amount":84000,"category":"Electronics",
+       "merchant":"VoltMart","city":"London","country":"GB","device_id":"new-phone"}'</code></pre>
+    </div>
+    <p class="foot">Built with FastAPI, scikit-learn, WebSockets, Chart.js and Leaflet. Transactions on this page are simulated; no real customer data is used.</p>
+  </section>
+</main>
+
+<dialog id="detail" aria-labelledby="d-title"></dialog>
+<div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+
+<script src="vendor/chart.umd.js"></script>
+<script src="vendor/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
